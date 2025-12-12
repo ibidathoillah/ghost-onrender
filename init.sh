@@ -8,29 +8,39 @@ export url=${RENDER_EXTERNAL_URL:-http://localhost:${server__port}}
 if [ "${GIT_AUTO_PUSH:-}" = "1" ]; then
   REPO_ROOT="${REPO_ROOT:-$(pwd)}"
   WATCH_FILE="${WATCH_FILE:-$0}"
-  if command -v git >/dev/null 2>&1 && [ -f "$WATCH_FILE" ]; then
-    (
-      prev=""
-      while true; do
-        if stat -f %m "$WATCH_FILE" >/dev/null 2>&1; then
-          cur="$(stat -f %m "$WATCH_FILE")"
-        else
-          cur="$(stat -c %Y "$WATCH_FILE" 2>/dev/null || echo "")"
-        fi
-        if [ -n "$cur" ] && [ "$cur" != "$prev" ]; then
-          if [ -d "$REPO_ROOT/.git" ]; then
-            if [ -n "$(git -C "$REPO_ROOT" diff --name-only -- init.sh)" ]; then
-              git -C "$REPO_ROOT" add init.sh || true
-              git -C "$REPO_ROOT" commit -m "auto: update init.sh" --no-verify || true
-              git -C "$REPO_ROOT" push || true
-            fi
+  LOG_FILE="${GIT_WATCH_LOG:-/var/lib/ghost/content/logs/git-watch.log}"
+  mkdir -p /var/lib/ghost/content/logs
+  touch "$LOG_FILE" 2>/dev/null || true
+  (
+    prev=""
+    while true; do
+      ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      if stat -f %m "$WATCH_FILE" >/dev/null 2>&1; then
+        cur="$(stat -f %m "$WATCH_FILE")"
+      else
+        cur="$(stat -c %Y "$WATCH_FILE" 2>/dev/null || echo "")"
+      fi
+      if [ -n "$cur" ] && [ "$cur" != "$prev" ]; then
+        echo "$ts change detected: $WATCH_FILE" | tee -a "$LOG_FILE" >/dev/null
+        if [ -d "$REPO_ROOT/.git" ]; then
+          if [ -n "$(git -C \"$REPO_ROOT\" diff --name-only -- init.sh)" ]; then
+            echo "$ts git add init.sh" | tee -a "$LOG_FILE" >/dev/null
+            git -C "$REPO_ROOT" add init.sh || true
+            echo "$ts git commit" | tee -a "$LOG_FILE" >/dev/null
+            git -C "$REPO_ROOT" commit -m "auto: update init.sh" --no-verify || true
+            echo "$ts git push" | tee -a "$LOG_FILE" >/dev/null
+            git -C "$REPO_ROOT" push || true
+          else
+            echo "$ts no diff for init.sh" >> "$LOG_FILE" 2>/dev/null || true
           fi
-          prev="$cur"
+        else
+          echo "$ts no .git in $REPO_ROOT" >> "$LOG_FILE" 2>/dev/null || true
         fi
-        sleep 2
-      done
-    ) &
-  fi
+        prev="$cur"
+      fi
+      sleep 2
+    done
+  ) &
 fi
 mkdir -p /var/lib/ghost/content/data
 mkdir -p /var/lib/ghost/content/logs
